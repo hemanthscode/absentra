@@ -1,72 +1,183 @@
+/**
+ * Database Seeding Script
+ * Usage: npm run seed
+ * 
+ * This script matches the Postman collection expectations
+ */
+
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
+const bcrypt = require('bcryptjs');
+
+// Load environment variables
+dotenv.config();
+
+// Import models
 const User = require('../models/User');
 const Leave = require('../models/Leave');
 const LeavePolicy = require('../models/LeavePolicy');
 const Holiday = require('../models/Holiday');
+
+// Import constants
 const { LEAVE_TYPES, LEAVE_STATUS, USER_ROLES, USER_GENDER } = require('../config/constants');
 
-dotenv.config();
-
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connected to MongoDB for seeding'))
-  .catch(err => console.error('Connection error:', err));
-
-// Helper function to generate random 10-digit phone number
-const generatePhoneNumber = (index) => {
-  return `987654${String(index + 1000).slice(-4)}`;
+// Colors for console output
+const colors = {
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  reset: '\x1b[39m'
 };
 
-// Helper function to calculate days between dates
-const calculateDays = (startDate, endDate, isHalfDay = false) => {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  const diffTime = Math.abs(end - start);
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-  return isHalfDay ? diffDays - 0.5 : diffDays;
+const log = {
+  info: (msg) => console.log(`${colors.blue}ℹ️ ${msg}${colors.reset}`),
+  success: (msg) => console.log(`${colors.green}✅ ${msg}${colors.reset}`),
+  warning: (msg) => console.log(`${colors.yellow}⚠️  ${msg}${colors.reset}`),
+  error: (msg) => console.log(`${colors.red}❌ ${msg}${colors.reset}`),
+  progress: (msg) => console.log(`${colors.cyan}🔄 ${msg}${colors.reset}`),
+  data: (msg) => console.log(`${colors.magenta}📊 ${msg}${colors.reset}`)
 };
 
-// Helper function to generate random date of birth (age between 22-60)
-const generateDateOfBirth = () => {
-  const year = 2024 - (Math.floor(Math.random() * 38) + 22); // Age between 22-60
-  const month = Math.floor(Math.random() * 12);
-  const day = Math.floor(Math.random() * 28) + 1;
-  return new Date(year, month, day);
+// Helper function to get date offsets (matching Postman pre-request script)
+const getDate = (daysOffset = 0) => {
+  const date = new Date();
+  date.setDate(date.getDate() + daysOffset);
+  // Set to noon UTC to avoid timezone issues
+  return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0));
 };
 
-// Mock data
-const departments = ['Engineering', 'HR', 'Sales', 'Marketing', 'Finance', 'Operations'];
-const designations = ['Software Engineer', 'Senior Engineer', 'Team Lead', 'Manager', 'Director', 'HR Executive', 'Sales Executive'];
-
-// Generate random date within range
-const randomDate = (start, end) => {
-  return new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+// Helper function to format date for display
+const formatDate = (date) => {
+  return date.toISOString().split('T')[0];
 };
 
-// Generate random employee ID
-const generateEmployeeId = (index, prefix = 'EMP') => {
-  return `${prefix}${String(index + 1000).slice(-4)}`;
+// Helper function to get day name from date
+const getDayName = (date) => {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return days[date.getDay()];
 };
 
-// Users data with gender specification
-const generateUsers = () => {
-  const users = [];
-  
-  // Admin user (gender neutral)
-  users.push({
+// ==================== SEED DATA DEFINITIONS ====================
+
+// Leave Policies Data
+const leavePoliciesData = [
+  {
+    policyName: 'Casual Leave Policy',
+    leaveType: LEAVE_TYPES.CASUAL,
+    totalDaysPerYear: 12,
+    maxConsecutiveDays: 5,
+    minDaysBeforeApply: 1,
+    requiresApproval: true,
+    carryForward: false,
+    maxCarryForwardDays: 0,
+    isActive: true,
+    description: 'Casual leave for personal emergencies and short breaks'
+  },
+  {
+    policyName: 'Sick Leave Policy',
+    leaveType: LEAVE_TYPES.SICK,
+    totalDaysPerYear: 12,
+    maxConsecutiveDays: 7,
+    minDaysBeforeApply: 0,
+    requiresApproval: true,
+    carryForward: false,
+    maxCarryForwardDays: 0,
+    isActive: true,
+    description: 'Sick leave for medical purposes'
+  },
+  {
+    policyName: 'Earned Leave Policy',
+    leaveType: LEAVE_TYPES.EARNED,
+    totalDaysPerYear: 15,
+    maxConsecutiveDays: 15,
+    minDaysBeforeApply: 3,
+    requiresApproval: true,
+    carryForward: true,
+    maxCarryForwardDays: 15,
+    isActive: true,
+    description: 'Annual earned/privilege leave'
+  },
+  {
+    policyName: 'Unpaid Leave Policy',
+    leaveType: LEAVE_TYPES.UNPAID,
+    totalDaysPerYear: 0,
+    maxConsecutiveDays: 30,
+    minDaysBeforeApply: 7,
+    requiresApproval: true,
+    carryForward: false,
+    maxCarryForwardDays: 0,
+    isActive: true,
+    description: 'Unpaid leave beyond available balance'
+  },
+  {
+    policyName: 'Maternity Leave Policy',
+    leaveType: LEAVE_TYPES.MATERNITY,
+    totalDaysPerYear: 180,
+    maxConsecutiveDays: 180,
+    minDaysBeforeApply: 30,
+    requiresApproval: true,
+    carryForward: false,
+    maxCarryForwardDays: 0,
+    isActive: true,
+    description: 'Maternity leave for female employees',
+    applicableToDepartments: ['Engineering', 'HR', 'Sales', 'Marketing']
+  },
+  {
+    policyName: 'Paternity Leave Policy',
+    leaveType: LEAVE_TYPES.PATERNITY,
+    totalDaysPerYear: 15,
+    maxConsecutiveDays: 15,
+    minDaysBeforeApply: 15,
+    requiresApproval: true,
+    carryForward: false,
+    maxCarryForwardDays: 0,
+    isActive: true,
+    description: 'Paternity leave for male employees'
+  },
+  {
+    policyName: 'Bereavement Leave Policy',
+    leaveType: LEAVE_TYPES.BEREAVEMENT,
+    totalDaysPerYear: 5,
+    maxConsecutiveDays: 5,
+    minDaysBeforeApply: 0,
+    requiresApproval: true,
+    carryForward: false,
+    maxCarryForwardDays: 0,
+    isActive: true,
+    description: 'Leave in case of family bereavement'
+  },
+  {
+    policyName: 'Marriage Leave Policy',
+    leaveType: LEAVE_TYPES.MARRIAGE,
+    totalDaysPerYear: 5,
+    maxConsecutiveDays: 5,
+    minDaysBeforeApply: 15,
+    requiresApproval: true,
+    carryForward: false,
+    maxCarryForwardDays: 0,
+    isActive: true,
+    description: 'Leave for own marriage'
+  }
+];
+
+// Users Data - MATCHING POSTMAN COLLECTION
+const usersData = [
+  // Admin User (matches Postman)
+  {
     employeeId: 'ADMIN001',
-    name: 'System Administrator',
+    name: 'System Admin',
     email: 'admin@absentra.com',
     password: 'Admin@123',
     role: USER_ROLES.ADMIN,
-    gender: USER_GENDER.OTHER,
-    department: 'IT',
+    gender: USER_GENDER.MALE,
+    department: 'Administration',
     designation: 'System Administrator',
-    managerId: null,
     joiningDate: new Date('2020-01-01'),
-    dateOfBirth: new Date('1985-01-15'),
-    contactNumber: '9876543210',
+    dateOfBirth: new Date('1990-01-01'),
+    contactNumber: '9999999999',
     address: {
       street: '123 Admin Street',
       city: 'Bangalore',
@@ -81,796 +192,537 @@ const generateUsers = () => {
       earned: 15,
       unpaid: 0,
       maternity: 0,
+      paternity: 15,
+      bereavement: 5,
+      marriage: 5
+    }
+  },
+  // Manager (matches Postman: John Manager)
+  {
+    employeeId: 'MGR001',
+    name: 'John Manager',
+    email: 'manager@absentra.com',
+    password: 'Manager@123',
+    role: USER_ROLES.MANAGER,
+    gender: USER_GENDER.MALE,
+    department: 'Engineering',
+    designation: 'Engineering Manager',
+    joiningDate: new Date('2019-06-01'),
+    dateOfBirth: new Date('1985-05-15'),
+    contactNumber: '8888888888',
+    address: {
+      street: '45 Manager Colony',
+      city: 'Bangalore',
+      state: 'Karnataka',
+      pincode: '560002',
+      country: 'India'
+    },
+    isActive: true,
+    leaveBalance: {
+      casual: 12,
+      sick: 12,
+      earned: 15,
+      unpaid: 0,
+      maternity: 0,
+      paternity: 15,
+      bereavement: 5,
+      marriage: 5
+    }
+  },
+  // Employee 1 - Male (matches Postman: Rajesh Kumar)
+  {
+    employeeId: 'EMP001',
+    name: 'Rajesh Kumar',
+    email: 'employee@absentra.com',
+    password: 'Employee@123',
+    role: USER_ROLES.EMPLOYEE,
+    gender: USER_GENDER.MALE,
+    department: 'Engineering',
+    designation: 'Software Engineer',
+    joiningDate: new Date('2022-01-15'),
+    dateOfBirth: new Date('1995-08-20'),
+    contactNumber: '7777777777',
+    address: {
+      street: '78 Tech Park',
+      city: 'Bangalore',
+      state: 'Karnataka',
+      pincode: '560004',
+      country: 'India'
+    },
+    isActive: true,
+    leaveBalance: {
+      casual: 12,
+      sick: 12,
+      earned: 15,
+      unpaid: 0,
+      maternity: 0,
+      paternity: 15,
+      bereavement: 5,
+      marriage: 5
+    }
+  },
+  // Employee 2 - Female (matches Postman: Priya Sharma)
+  {
+    employeeId: 'EMP002',
+    name: 'Priya Sharma',
+    email: 'employee2@absentra.com',
+    password: 'Employee@123',
+    role: USER_ROLES.EMPLOYEE,
+    gender: USER_GENDER.FEMALE,
+    department: 'Engineering',
+    designation: 'Frontend Developer',
+    joiningDate: new Date('2022-06-20'),
+    dateOfBirth: new Date('1996-03-10'),
+    contactNumber: '6666666666',
+    address: {
+      street: '234 Green Valley',
+      city: 'Bangalore',
+      state: 'Karnataka',
+      pincode: '560005',
+      country: 'India'
+    },
+    isActive: true,
+    leaveBalance: {
+      casual: 12,
+      sick: 12,
+      earned: 15,
+      unpaid: 0,
+      maternity: 180,
       paternity: 0,
       bereavement: 5,
       marriage: 5
     }
-  });
-  
-  // Managers (5 managers) - Mix of male and female
-  const managers = [];
-  const managerGenders = [USER_GENDER.MALE, USER_GENDER.FEMALE, USER_GENDER.MALE, USER_GENDER.FEMALE, USER_GENDER.MALE];
-  
-  for (let i = 1; i <= 5; i++) {
-    const gender = managerGenders[i - 1];
-    const manager = {
-      employeeId: generateEmployeeId(i, 'MGR'),
-      name: `Manager ${i}`,
-      email: `manager${i}@absentra.com`,
-      password: 'Manager@123',
-      role: USER_ROLES.MANAGER,
-      gender: gender,
-      department: departments[(i - 1) % departments.length],
-      designation: designations[3 + (i % 2)],
-      managerId: null,
-      joiningDate: randomDate(new Date('2019-01-01'), new Date('2021-01-01')),
-      dateOfBirth: generateDateOfBirth(),
-      contactNumber: generatePhoneNumber(i + 100),
-      address: {
-        street: `${i} Manager Lane`,
-        city: 'Bangalore',
-        state: 'Karnataka',
-        pincode: `56000${i}`,
-        country: 'India'
-      },
-      isActive: true,
-      leaveBalance: {
-        casual: 12,
-        sick: 12,
-        earned: 15,
-        unpaid: 0,
-        maternity: gender === USER_GENDER.FEMALE ? 180 : 0,
-        paternity: gender === USER_GENDER.MALE ? 15 : 0,
-        bereavement: 5,
-        marriage: 5
-      }
-    };
-    managers.push(manager);
-    users.push(manager);
-  }
-  
-  // Employees (30 employees) - Mix of genders
-  const employeeGenders = [];
-  for (let i = 1; i <= 30; i++) {
-    // Create a mix: 12 female, 15 male, 3 other
-    if (i <= 12) employeeGenders.push(USER_GENDER.FEMALE);
-    else if (i <= 27) employeeGenders.push(USER_GENDER.MALE);
-    else employeeGenders.push(USER_GENDER.OTHER);
-  }
-  
-  for (let i = 1; i <= 30; i++) {
-    const manager = managers[(i - 1) % managers.length];
-    const gender = employeeGenders[i - 1];
-    const joiningDate = randomDate(new Date('2022-01-01'), new Date('2024-01-01'));
-    const yearsOfService = (new Date() - joiningDate) / (1000 * 60 * 60 * 24 * 365);
-    
-    // Different leave balances based on years of service and gender
-    let leaveBalance = {
+  },
+  // Additional employee for more test coverage
+  {
+    employeeId: 'EMP003',
+    name: 'Test Employee',
+    email: 'test@absentra.com',
+    password: 'Employee@123',
+    role: USER_ROLES.EMPLOYEE,
+    gender: USER_GENDER.MALE,
+    department: 'HR',
+    designation: 'HR Executive',
+    joiningDate: new Date('2022-02-10'),
+    dateOfBirth: new Date('1995-04-18'),
+    contactNumber: '7777777773',
+    address: {
+      street: '56 Lake View',
+      city: 'Bangalore',
+      state: 'Karnataka',
+      pincode: '560006',
+      country: 'India'
+    },
+    isActive: true,
+    leaveBalance: {
       casual: 12,
       sick: 12,
-      earned: Math.min(15 + Math.floor(yearsOfService * 2), 30),
+      earned: 15,
       unpaid: 0,
-      maternity: gender === USER_GENDER.FEMALE ? 180 : 0,
-      paternity: gender === USER_GENDER.MALE ? 15 : 0,
+      maternity: 0,
+      paternity: 15,
       bereavement: 5,
       marriage: 5
-    };
-    
-    // Edge case: Employee 25 has reduced leave balance for testing insufficient balance
-    if (i === 25) {
-      leaveBalance.casual = 2;
-      leaveBalance.sick = 1;
-      leaveBalance.earned = 0;
     }
-    
-    // Edge case: Employee 26 has zero balance
-    if (i === 26) {
-      leaveBalance.casual = 0;
-      leaveBalance.sick = 0;
-    }
-    
-    const employee = {
-      employeeId: generateEmployeeId(i, 'EMP'),
-      name: `Employee ${i}`,
-      email: `employee${i}@absentra.com`,
-      password: 'Employee@123',
-      role: USER_ROLES.EMPLOYEE,
-      gender: gender,
-      department: departments[(i - 1) % departments.length],
-      designation: designations[(i - 1) % 3],
-      managerId: manager ? manager._id || null : null,
-      joiningDate: joiningDate,
-      dateOfBirth: generateDateOfBirth(),
-      contactNumber: generatePhoneNumber(i),
-      address: {
-        street: `${i} Employee Street`,
-        city: ['Bangalore', 'Mumbai', 'Delhi', 'Chennai', 'Hyderabad'][(i - 1) % 5],
-        state: ['Karnataka', 'Maharashtra', 'Delhi', 'Tamil Nadu', 'Telangana'][(i - 1) % 5],
-        pincode: `5600${String(i).slice(-3)}`,
-        country: 'India'
-      },
-      isActive: i !== 28, // Make employee 28 inactive for edge case
-      leaveBalance: leaveBalance
-    };
-    users.push(employee);
   }
-  
-  return users;
-};
+];
 
-// Generate leaves data with gender-specific leaves
-const generateLeaves = (users) => {
+// Holidays Data - WITH EXPLICIT year AND day fields (matching Postman)
+const holidaysData = [
+  {
+    name: 'Republic Day',
+    date: new Date('2026-01-26'),
+    day: 'Monday',
+    year: 2026,
+    type: 'national',
+    description: 'Republic Day celebration',
+    isOptional: false,
+    isActive: true
+  },
+  {
+    name: 'Independence Day',
+    date: new Date('2026-08-15'),
+    day: 'Saturday',
+    year: 2026,
+    type: 'national',
+    description: 'Independence Day celebration',
+    isOptional: false,
+    isActive: true
+  },
+  {
+    name: 'Gandhi Jayanti',
+    date: new Date('2026-10-02'),
+    day: 'Friday',
+    year: 2026,
+    type: 'national',
+    description: 'Gandhi Jayanti',
+    isOptional: false,
+    isActive: true
+  },
+  {
+    name: 'Diwali',
+    date: new Date('2026-10-20'),
+    day: 'Tuesday',
+    year: 2026,
+    type: 'festival',
+    description: 'Festival of lights',
+    isOptional: false,
+    isActive: true
+  },
+  {
+    name: 'Christmas',
+    date: new Date('2026-12-25'),
+    day: 'Friday',
+    year: 2026,
+    type: 'festival',
+    description: 'Christmas Day',
+    isOptional: false,
+    isActive: true
+  },
+  {
+    name: 'New Year',
+    date: new Date('2026-01-01'),
+    day: 'Thursday',
+    year: 2026,
+    type: 'national',
+    description: 'New Year Day',
+    isOptional: false,
+    isActive: true
+  }
+];
+
+// Leave Applications Data (matching Postman test flow)
+const generateLeaveApplications = (users, managers) => {
   const leaves = [];
-  const employees = users.filter(u => u.role === USER_ROLES.EMPLOYEE);
-  const managers = users.filter(u => u.role === USER_ROLES.MANAGER);
   
-  const leaveTypes = Object.values(LEAVE_TYPES);
-  
-  // Generate leaves for each employee
-  employees.forEach((employee, idx) => {
-    const manager = managers.find(m => m._id.toString() === employee.managerId?.toString()) || managers[0];
-    const numLeaves = Math.floor(Math.random() * 8) + 2; // 2-10 leaves per employee
-    
-    for (let i = 0; i < numLeaves; i++) {
-      // Random leave type - filter gender-specific leaves
-      let availableLeaveTypes = leaveTypes.filter(type => {
-        if (type === LEAVE_TYPES.MATERNITY && employee.gender !== USER_GENDER.FEMALE) return false;
-        if (type === LEAVE_TYPES.PATERNITY && employee.gender !== USER_GENDER.MALE) return false;
-        return true;
-      });
-      
-      let leaveType = availableLeaveTypes[Math.floor(Math.random() * availableLeaveTypes.length)];
-      
-      // Edge cases: specific leave types for specific employees
-      if (idx === 0) leaveType = LEAVE_TYPES.CASUAL;
-      if (idx === 1) leaveType = LEAVE_TYPES.SICK;
-      if (idx === 2) leaveType = LEAVE_TYPES.EARNED;
-      if (idx === 3) leaveType = LEAVE_TYPES.UNPAID;
-      
-      // Gender-specific edge cases
-      if (idx === 4 && employee.gender === USER_GENDER.FEMALE) leaveType = LEAVE_TYPES.MATERNITY;
-      if (idx === 5 && employee.gender === USER_GENDER.MALE) leaveType = LEAVE_TYPES.PATERNITY;
-      if (idx === 6) leaveType = LEAVE_TYPES.BEREAVEMENT;
-      if (idx === 7) leaveType = LEAVE_TYPES.MARRIAGE;
-      
-      // Random dates - ensure dates are in 2024 and duration is positive
-      const startDate = randomDate(new Date('2024-01-01'), new Date('2024-11-30'));
-      const duration = Math.floor(Math.random() * 5) + 1; // 1-5 days
-      const endDate = new Date(startDate);
-      endDate.setDate(startDate.getDate() + duration);
-      
-      // Ensure end date is not beyond 2024
-      if (endDate.getFullYear() > 2024) {
-        endDate.setFullYear(2024);
-        endDate.setMonth(11);
-        endDate.setDate(28);
-      }
-      
-      const numberOfDays = calculateDays(startDate, endDate, false);
-      
-      // Random status with more approved than others
-      let status;
-      if (i < 5) status = LEAVE_STATUS.APPROVED;
-      else if (i < 7) status = LEAVE_STATUS.PENDING;
-      else if (i < 8) status = LEAVE_STATUS.REJECTED;
-      else status = LEAVE_STATUS.CANCELLED;
-      
-      // Regular leave
-      leaves.push({
-        employeeId: employee._id,
-        managerId: manager._id,
-        leaveType: leaveType,
-        startDate: startDate,
-        endDate: endDate,
-        numberOfDays: numberOfDays,
-        reason: `${leaveType} leave application - ${status} - ${i + 1}`,
-        status: status,
-        appliedDate: randomDate(new Date('2024-01-01'), new Date()),
-        reviewedBy: status !== LEAVE_STATUS.PENDING ? manager._id : null,
-        reviewedDate: status !== LEAVE_STATUS.PENDING ? randomDate(new Date('2024-01-01'), new Date()) : null,
-        comments: null,
-        isHalfDay: false,
-        halfDaySession: null,
-        contactDuringLeave: employee.contactNumber,
-        emergencyContact: generatePhoneNumber(999)
-      });
-    }
+  // Map for quick lookup
+  const userMap = new Map();
+  users.forEach(user => {
+    userMap.set(user.email, user);
   });
   
-  // Edge case: Half-day leave (for employee 15)
-  const employee15 = employees.find(e => e.name === 'Employee 15');
-  const manager15 = managers.find(m => m._id.toString() === employee15?.managerId?.toString());
-  if (employee15 && manager15) {
-    const startDate = new Date('2024-07-15');
-    const endDate = new Date('2024-07-15');
-    const numberOfDays = calculateDays(startDate, endDate, true);
-    
-    leaves.push({
-      employeeId: employee15._id,
-      managerId: manager15._id,
-      leaveType: LEAVE_TYPES.CASUAL,
-      startDate: startDate,
-      endDate: endDate,
-      numberOfDays: numberOfDays,
-      reason: 'Half day leave for personal appointment',
-      status: LEAVE_STATUS.PENDING,
-      appliedDate: new Date('2024-07-10'),
-      reviewedBy: null,
-      reviewedDate: null,
-      comments: null,
-      isHalfDay: true,
-      halfDaySession: 'first_half',
-      contactDuringLeave: employee15.contactNumber,
-      emergencyContact: generatePhoneNumber(999)
-    });
+  const managerMap = new Map();
+  managers.forEach(manager => {
+    managerMap.set(manager.email, manager);
+  });
+  
+  // Get specific users
+  const employee = userMap.get('employee@absentra.com');
+  const manager = managerMap.get('manager@absentra.com');
+  
+  if (!employee || !manager) {
+    console.log('Warning: Could not find employee or manager for leave creation');
+    return leaves;
   }
   
-  // Edge case: Leave with comments (for employee 20)
-  const employee20 = employees.find(e => e.name === 'Employee 20');
-  const manager20 = managers.find(m => m._id.toString() === employee20?.managerId?.toString());
-  if (employee20 && manager20) {
-    const startDate = new Date('2024-08-10');
-    const endDate = new Date('2024-08-15');
-    const numberOfDays = calculateDays(startDate, endDate, false);
-    
-    leaves.push({
-      employeeId: employee20._id,
-      managerId: manager20._id,
-      leaveType: LEAVE_TYPES.EARNED,
-      startDate: startDate,
-      endDate: endDate,
-      numberOfDays: numberOfDays,
-      reason: 'Annual vacation with family',
-      status: LEAVE_STATUS.APPROVED,
-      appliedDate: new Date('2024-07-20'),
-      reviewedBy: manager20._id,
-      reviewedDate: new Date('2024-07-25'),
-      comments: 'Approved with comments: Please ensure work is handed over properly before leaving',
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: employee20.contactNumber,
-      emergencyContact: generatePhoneNumber(998)
-    });
-  }
+  // Calculate dates matching Postman pre-request script
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const nextWeek = new Date(today);
+  nextWeek.setDate(today.getDate() + 7);
+  const nextMonth = new Date(today);
+  nextMonth.setDate(today.getDate() + 30);
   
-  // Edge case: Overlapping leaves (for employee 10)
-  const employee10 = employees.find(e => e.name === 'Employee 10');
-  const manager10 = managers.find(m => m._id.toString() === employee10?.managerId?.toString());
-  if (employee10 && manager10) {
-    const startDate1 = new Date('2024-09-10');
-    const endDate1 = new Date('2024-09-15');
-    const numberOfDays1 = calculateDays(startDate1, endDate1, false);
-    
-    const startDate2 = new Date('2024-09-12');
-    const endDate2 = new Date('2024-09-18');
-    const numberOfDays2 = calculateDays(startDate2, endDate2, false);
-    
-    // First leave
-    leaves.push({
-      employeeId: employee10._id,
-      managerId: manager10._id,
-      leaveType: LEAVE_TYPES.CASUAL,
-      startDate: startDate1,
-      endDate: endDate1,
-      numberOfDays: numberOfDays1,
-      reason: 'First leave - vacation',
-      status: LEAVE_STATUS.APPROVED,
-      appliedDate: new Date('2024-08-20'),
-      reviewedBy: manager10._id,
-      reviewedDate: new Date('2024-08-25'),
-      comments: null,
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: employee10.contactNumber,
-      emergencyContact: generatePhoneNumber(997)
-    });
-    
-    // Second overlapping leave
-    leaves.push({
-      employeeId: employee10._id,
-      managerId: manager10._id,
-      leaveType: LEAVE_TYPES.SICK,
-      startDate: startDate2,
-      endDate: endDate2,
-      numberOfDays: numberOfDays2,
-      reason: 'Second leave - overlapping with first',
-      status: LEAVE_STATUS.PENDING,
-      appliedDate: new Date('2024-08-30'),
-      reviewedBy: null,
-      reviewedDate: null,
-      comments: null,
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: employee10.contactNumber,
-      emergencyContact: generatePhoneNumber(996)
-    });
-  }
+  // Set to noon UTC to avoid timezone issues
+  const tomorrowUTC = new Date(Date.UTC(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate(), 12, 0, 0));
+  const nextWeekUTC = new Date(Date.UTC(nextWeek.getFullYear(), nextWeek.getMonth(), nextWeek.getDate(), 12, 0, 0));
+  const nextMonthUTC = new Date(Date.UTC(nextMonth.getFullYear(), nextMonth.getMonth(), nextMonth.getDate(), 12, 0, 0));
   
-  // Edge case: Leave with insufficient balance (for employee 25)
-  const employee25 = employees.find(e => e.name === 'Employee 25');
-  const manager25 = managers.find(m => m._id.toString() === employee25?.managerId?.toString());
-  if (employee25 && manager25) {
-    const startDate = new Date('2024-06-01');
-    const endDate = new Date('2024-06-20');
-    const numberOfDays = calculateDays(startDate, endDate, false);
-    
-    leaves.push({
-      employeeId: employee25._id,
-      managerId: manager25._id,
-      leaveType: LEAVE_TYPES.CASUAL,
-      startDate: startDate,
-      endDate: endDate,
-      numberOfDays: numberOfDays,
-      reason: 'Long vacation - testing insufficient balance scenario',
-      status: LEAVE_STATUS.PENDING,
-      appliedDate: new Date('2024-05-15'),
-      reviewedBy: null,
-      reviewedDate: null,
-      comments: null,
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: employee25.contactNumber,
-      emergencyContact: generatePhoneNumber(995)
-    });
-  }
+  // 1. Casual Leave (Pending - for approval test) - matches Postman "Apply for Casual Leave"
+  leaves.push({
+    employeeId: employee._id,
+    managerId: manager._id,
+    leaveType: LEAVE_TYPES.CASUAL,
+    startDate: tomorrowUTC,
+    endDate: nextWeekUTC,
+    numberOfDays: 7,
+    reason: 'Going on a family vacation',
+    status: LEAVE_STATUS.PENDING,
+    appliedDate: new Date(),
+    reviewedBy: null,
+    reviewedDate: null,
+    comments: null,
+    isHalfDay: false,
+    contactDuringLeave: '9999999999',
+    emergencyContact: '8888888888'
+  });
   
-  // Edge case: Past leave date (for employee 26)
-  const employee26 = employees.find(e => e.name === 'Employee 26');
-  const manager26 = managers.find(m => m._id.toString() === employee26?.managerId?.toString());
-  if (employee26 && manager26) {
-    const startDate = new Date('2023-12-25');
-    const endDate = new Date('2023-12-28');
-    const numberOfDays = calculateDays(startDate, endDate, false);
-    
-    leaves.push({
-      employeeId: employee26._id,
-      managerId: manager26._id,
-      leaveType: LEAVE_TYPES.SICK,
-      startDate: startDate,
-      endDate: endDate,
-      numberOfDays: numberOfDays,
-      reason: 'Past leave - should be rejected by validation',
-      status: LEAVE_STATUS.PENDING,
-      appliedDate: new Date('2023-12-20'),
-      reviewedBy: null,
-      reviewedDate: null,
-      comments: null,
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: employee26.contactNumber,
-      emergencyContact: generatePhoneNumber(994)
-    });
-  }
+  // 2. Sick Leave (Pending - for reject test) - matches Postman "Apply for Sick Leave (Half Day)"
+  leaves.push({
+    employeeId: employee._id,
+    managerId: manager._id,
+    leaveType: LEAVE_TYPES.SICK,
+    startDate: tomorrowUTC,
+    endDate: tomorrowUTC,
+    numberOfDays: 0.5,
+    reason: "Doctor's appointment",
+    status: LEAVE_STATUS.PENDING,
+    appliedDate: new Date(),
+    reviewedBy: null,
+    reviewedDate: null,
+    comments: null,
+    isHalfDay: true,
+    halfDaySession: 'first_half'
+  });
   
-  // Edge case: Maternity leave (for female employee 4)
-  const femaleEmployee = employees.find(e => e.gender === USER_GENDER.FEMALE && e.name !== 'Employee 25');
-  const managerFE = managers.find(m => m._id.toString() === femaleEmployee?.managerId?.toString());
-  if (femaleEmployee && managerFE) {
-    const startDate = new Date('2024-03-01');
-    const endDate = new Date('2024-08-28');
-    const numberOfDays = calculateDays(startDate, endDate, false);
-    
-    leaves.push({
-      employeeId: femaleEmployee._id,
-      managerId: managerFE._id,
-      leaveType: LEAVE_TYPES.MATERNITY,
-      startDate: startDate,
-      endDate: endDate,
-      numberOfDays: numberOfDays,
-      reason: 'Maternity leave',
-      status: LEAVE_STATUS.APPROVED,
-      appliedDate: new Date('2024-01-15'),
-      reviewedBy: managerFE._id,
-      reviewedDate: new Date('2024-01-20'),
-      comments: 'Approved. Wishing you a healthy pregnancy.',
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: femaleEmployee.contactNumber,
-      emergencyContact: generatePhoneNumber(993)
-    });
-  }
+  // 3. Earned Leave (Pending - for cancel test) - matches Postman "Apply for Earned Leave"
+  leaves.push({
+    employeeId: employee._id,
+    managerId: manager._id,
+    leaveType: LEAVE_TYPES.EARNED,
+    startDate: nextWeekUTC,
+    endDate: nextMonthUTC,
+    numberOfDays: 23,
+    reason: 'Annual planned vacation',
+    status: LEAVE_STATUS.PENDING,
+    appliedDate: new Date(),
+    reviewedBy: null,
+    reviewedDate: null,
+    comments: null,
+    isHalfDay: false
+  });
   
-  // Edge case: Paternity leave (for male employee 5)
-  const maleEmployee = employees.find(e => e.gender === USER_GENDER.MALE && e.name !== 'Employee 26');
-  const managerMA = managers.find(m => m._id.toString() === maleEmployee?.managerId?.toString());
-  if (maleEmployee && managerMA) {
-    const startDate = new Date('2024-04-10');
-    const endDate = new Date('2024-04-24');
-    const numberOfDays = calculateDays(startDate, endDate, false);
-    
-    leaves.push({
-      employeeId: maleEmployee._id,
-      managerId: managerMA._id,
-      leaveType: LEAVE_TYPES.PATERNITY,
-      startDate: startDate,
-      endDate: endDate,
-      numberOfDays: numberOfDays,
-      reason: 'Paternity leave for newborn',
-      status: LEAVE_STATUS.APPROVED,
-      appliedDate: new Date('2024-03-01'),
-      reviewedBy: managerMA._id,
-      reviewedDate: new Date('2024-03-05'),
-      comments: 'Congratulations!',
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: maleEmployee.contactNumber,
-      emergencyContact: generatePhoneNumber(992)
-    });
-  }
+  // 4. Approved Casual Leave (past)
+  const pastDate = new Date(today);
+  pastDate.setDate(today.getDate() - 15);
+  const pastDateUTC = new Date(Date.UTC(pastDate.getFullYear(), pastDate.getMonth(), pastDate.getDate(), 12, 0, 0));
+  const pastDateEnd = new Date(today);
+  pastDateEnd.setDate(today.getDate() - 13);
+  const pastDateEndUTC = new Date(Date.UTC(pastDateEnd.getFullYear(), pastDateEnd.getMonth(), pastDateEnd.getDate(), 12, 0, 0));
   
-  // Edge case: Bereavement leave (for employee 6)
-  const employee6 = employees.find(e => e.name === 'Employee 6');
-  const manager6 = managers.find(m => m._id.toString() === employee6?.managerId?.toString());
-  if (employee6 && manager6) {
-    const startDate = new Date('2024-05-20');
-    const endDate = new Date('2024-05-24');
-    const numberOfDays = calculateDays(startDate, endDate, false);
-    
-    leaves.push({
-      employeeId: employee6._id,
-      managerId: manager6._id,
-      leaveType: LEAVE_TYPES.BEREAVEMENT,
-      startDate: startDate,
-      endDate: endDate,
-      numberOfDays: numberOfDays,
-      reason: 'Family bereavement',
-      status: LEAVE_STATUS.APPROVED,
-      appliedDate: new Date('2024-05-18'),
-      reviewedBy: manager6._id,
-      reviewedDate: new Date('2024-05-19'),
-      comments: 'Sorry for your loss. Take the time you need.',
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: employee6.contactNumber,
-      emergencyContact: generatePhoneNumber(991)
-    });
-  }
-  
-  // Edge case: Marriage leave (for employee 7)
-  const employee7 = employees.find(e => e.name === 'Employee 7');
-  const manager7 = managers.find(m => m._id.toString() === employee7?.managerId?.toString());
-  if (employee7 && manager7) {
-    const startDate = new Date('2024-11-15');
-    const endDate = new Date('2024-11-19');
-    const numberOfDays = calculateDays(startDate, endDate, false);
-    
-    leaves.push({
-      employeeId: employee7._id,
-      managerId: manager7._id,
-      leaveType: LEAVE_TYPES.MARRIAGE,
-      startDate: startDate,
-      endDate: endDate,
-      numberOfDays: numberOfDays,
-      reason: 'Marriage leave',
-      status: LEAVE_STATUS.PENDING,
-      appliedDate: new Date('2024-10-01'),
-      reviewedBy: null,
-      reviewedDate: null,
-      comments: null,
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: employee7.contactNumber,
-      emergencyContact: generatePhoneNumber(990)
-    });
-  }
-  
-  // Edge case: Cancelled leave (for employee 8)
-  const employee8 = employees.find(e => e.name === 'Employee 8');
-  const manager8 = managers.find(m => m._id.toString() === employee8?.managerId?.toString());
-  if (employee8 && manager8) {
-    const startDate = new Date('2024-09-05');
-    const endDate = new Date('2024-09-07');
-    const numberOfDays = calculateDays(startDate, endDate, false);
-    
-    leaves.push({
-      employeeId: employee8._id,
-      managerId: manager8._id,
-      leaveType: LEAVE_TYPES.CASUAL,
-      startDate: startDate,
-      endDate: endDate,
-      numberOfDays: numberOfDays,
-      reason: 'Planned leave - cancelled later',
-      status: LEAVE_STATUS.CANCELLED,
-      appliedDate: new Date('2024-08-01'),
-      reviewedBy: null,
-      reviewedDate: null,
-      comments: 'Cancelled due to change in plans',
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: employee8.contactNumber,
-      emergencyContact: generatePhoneNumber(989)
-    });
-  }
-  
-  // Edge case: Rejected leave (for employee 9)
-  const employee9 = employees.find(e => e.name === 'Employee 9');
-  const manager9 = managers.find(m => m._id.toString() === employee9?.managerId?.toString());
-  if (employee9 && manager9) {
-    const startDate = new Date('2024-10-20');
-    const endDate = new Date('2024-10-25');
-    const numberOfDays = calculateDays(startDate, endDate, false);
-    
-    leaves.push({
-      employeeId: employee9._id,
-      managerId: manager9._id,
-      leaveType: LEAVE_TYPES.EARNED,
-      startDate: startDate,
-      endDate: endDate,
-      numberOfDays: numberOfDays,
-      reason: 'Vacation request',
-      status: LEAVE_STATUS.REJECTED,
-      appliedDate: new Date('2024-09-15'),
-      reviewedBy: manager9._id,
-      reviewedDate: new Date('2024-09-20'),
-      comments: 'Rejected due to project deadlines during this period',
-      isHalfDay: false,
-      halfDaySession: null,
-      contactDuringLeave: employee9.contactNumber,
-      emergencyContact: generatePhoneNumber(988)
-    });
-  }
+  leaves.push({
+    employeeId: employee._id,
+    managerId: manager._id,
+    leaveType: LEAVE_TYPES.CASUAL,
+    startDate: pastDateUTC,
+    endDate: pastDateEndUTC,
+    numberOfDays: 3,
+    reason: 'Previous vacation',
+    status: LEAVE_STATUS.APPROVED,
+    appliedDate: new Date(pastDateUTC.getTime() - 7 * 24 * 60 * 60 * 1000),
+    reviewedBy: manager._id,
+    reviewedDate: new Date(pastDateUTC.getTime() - 3 * 24 * 60 * 60 * 1000),
+    comments: 'Approved',
+    isHalfDay: false
+  });
   
   return leaves;
 };
 
-// Generate leave policies
-const generatePolicies = () => {
-  const policies = [];
-  
-  const policyConfigs = [
-    {
-      policyName: 'Casual Leave Policy',
-      leaveType: LEAVE_TYPES.CASUAL,
-      totalDaysPerYear: 12,
-      maxConsecutiveDays: 3,
-      minDaysBeforeApply: 1,
-      requiresApproval: true,
-      carryForward: false,
-      isActive: true,
-      description: 'Casual leaves for personal reasons',
-      applicableToGenders: [USER_GENDER.MALE, USER_GENDER.FEMALE, USER_GENDER.OTHER]
-    },
-    {
-      policyName: 'Sick Leave Policy',
-      leaveType: LEAVE_TYPES.SICK,
-      totalDaysPerYear: 12,
-      maxConsecutiveDays: 5,
-      minDaysBeforeApply: 0,
-      requiresApproval: true,
-      carryForward: false,
-      isActive: true,
-      description: 'Medical leave with doctor certificate required for more than 3 days',
-      documentsRequired: true,
-      documentsList: ['Medical Certificate'],
-      applicableToGenders: [USER_GENDER.MALE, USER_GENDER.FEMALE, USER_GENDER.OTHER]
-    },
-    {
-      policyName: 'Earned Leave Policy',
-      leaveType: LEAVE_TYPES.EARNED,
-      totalDaysPerYear: 15,
-      maxConsecutiveDays: 30,
-      minDaysBeforeApply: 7,
-      requiresApproval: true,
-      carryForward: true,
-      maxCarryForwardDays: 15,
-      isActive: true,
-      description: 'Annual earned leave',
-      applicableToGenders: [USER_GENDER.MALE, USER_GENDER.FEMALE, USER_GENDER.OTHER]
-    },
-    {
-      policyName: 'Unpaid Leave Policy',
-      leaveType: LEAVE_TYPES.UNPAID,
-      totalDaysPerYear: 0,
-      maxConsecutiveDays: 30,
-      minDaysBeforeApply: 7,
-      requiresApproval: true,
-      carryForward: false,
-      isActive: true,
-      description: 'Leave without pay',
-      applicableToGenders: [USER_GENDER.MALE, USER_GENDER.FEMALE, USER_GENDER.OTHER]
-    },
-    {
-      policyName: 'Maternity Leave Policy',
-      leaveType: LEAVE_TYPES.MATERNITY,
-      totalDaysPerYear: 180,
-      maxConsecutiveDays: 180,
-      minDaysBeforeApply: 30,
-      requiresApproval: true,
-      carryForward: false,
-      isActive: true,
-      description: 'Maternity leave for female employees',
-      applicableToDesignations: ['Software Engineer', 'Senior Engineer', 'Team Lead', 'Manager'],
-      applicableToGenders: [USER_GENDER.FEMALE],
-      documentsRequired: true,
-      documentsList: ['Medical Certificate', 'Expected Delivery Date']
-    },
-    {
-      policyName: 'Paternity Leave Policy',
-      leaveType: LEAVE_TYPES.PATERNITY,
-      totalDaysPerYear: 15,
-      maxConsecutiveDays: 15,
-      minDaysBeforeApply: 15,
-      requiresApproval: true,
-      carryForward: false,
-      isActive: true,
-      description: 'Paternity leave for male employees',
-      applicableToGenders: [USER_GENDER.MALE]
-    },
-    {
-      policyName: 'Bereavement Leave Policy',
-      leaveType: LEAVE_TYPES.BEREAVEMENT,
-      totalDaysPerYear: 5,
-      maxConsecutiveDays: 5,
-      minDaysBeforeApply: 0,
-      requiresApproval: true,
-      carryForward: false,
-      isActive: true,
-      description: 'Leave in case of family member demise',
-      applicableToGenders: [USER_GENDER.MALE, USER_GENDER.FEMALE, USER_GENDER.OTHER]
-    },
-    {
-      policyName: 'Marriage Leave Policy',
-      leaveType: LEAVE_TYPES.MARRIAGE,
-      totalDaysPerYear: 5,
-      maxConsecutiveDays: 5,
-      minDaysBeforeApply: 7,
-      requiresApproval: true,
-      carryForward: false,
-      isActive: true,
-      description: 'Leave for marriage',
-      applicableToGenders: [USER_GENDER.MALE, USER_GENDER.FEMALE, USER_GENDER.OTHER]
-    }
-  ];
-  
-  policyConfigs.forEach(config => {
-    policies.push(config);
-  });
-  
-  return policies;
-};
+// ==================== MAIN SEED FUNCTION ====================
 
-// Generate holidays
-const generateHolidays = () => {
-  const holidays = [];
-  
-  const holidayList = [
-    { name: 'Republic Day', date: '2024-01-26', type: 'national', description: 'Republic Day of India' },
-    { name: 'Maha Shivaratri', date: '2024-03-08', type: 'festival', description: 'Maha Shivaratri' },
-    { name: 'Holi', date: '2024-03-25', type: 'festival', description: 'Festival of Colors' },
-    { name: 'Good Friday', date: '2024-03-29', type: 'national', description: 'Good Friday' },
-    { name: 'Ugadi', date: '2024-04-09', type: 'regional', description: 'Telugu New Year', applicableToLocations: ['Bangalore', 'Hyderabad'] },
-    { name: 'Ramzan Id', date: '2024-04-11', type: 'festival', description: 'Eid-ul-Fitr' },
-    { name: 'Labour Day', date: '2024-05-01', type: 'national', description: 'International Workers Day' },
-    { name: 'Independence Day', date: '2024-08-15', type: 'national', description: 'Independence Day' },
-    { name: 'Ganesh Chaturthi', date: '2024-09-07', type: 'festival', description: 'Ganesh Chaturthi' },
-    { name: 'Gandhi Jayanti', date: '2024-10-02', type: 'national', description: 'Mahatma Gandhi Birthday' },
-    { name: 'Dussehra', date: '2024-10-12', type: 'festival', description: 'Vijaya Dashami' },
-    { name: 'Diwali', date: '2024-10-31', type: 'festival', description: 'Festival of Lights' },
-    { name: 'Christmas', date: '2024-12-25', type: 'national', description: 'Christmas Day' }
-  ];
-  
-  holidayList.forEach((holiday) => {
-    holidays.push({
-      name: holiday.name,
-      date: new Date(holiday.date),
-      day: new Date(holiday.date).toLocaleDateString('en-US', { weekday: 'long' }),
-      type: holiday.type,
-      description: holiday.description,
-      isOptional: false,
-      applicableToLocations: holiday.applicableToLocations || [],
-      year: 2024,
-      isActive: true
-    });
-  });
-  
-  return holidays;
-};
-
-// Main seed function
 const seedDatabase = async () => {
+  console.log('\n' + '='.repeat(60));
+  log.info('ABSENTRA DATABASE SEEDER');
+  console.log('='.repeat(60) + '\n');
+  
   try {
-    console.log('🧹 Clearing existing data...');
+    // Connect to MongoDB
+    log.progress('Connecting to MongoDB...');
+    await mongoose.connect(process.env.MONGODB_URI);
+    log.success('Connected to MongoDB');
+    console.log('');
+    
+    // ==================== 1. Clear Existing Data ====================
+    log.progress('Clearing existing data...');
+    
     await User.deleteMany({});
+    log.success('Cleared Users collection');
+    
     await Leave.deleteMany({});
+    log.success('Cleared Leaves collection');
+    
     await LeavePolicy.deleteMany({});
+    log.success('Cleared LeavePolicies collection');
+    
     await Holiday.deleteMany({});
+    log.success('Cleared Holidays collection');
     
-    console.log('📝 Creating leave policies...');
-    const policies = await LeavePolicy.insertMany(generatePolicies());
-    console.log(`✅ Created ${policies.length} leave policies`);
+    console.log('');
     
-    console.log('👥 Creating users...');
-    const users = generateUsers();
+    // ==================== 2. Seed Leave Policies ====================
+    log.progress('Seeding leave policies...');
+    const policies = await LeavePolicy.insertMany(leavePoliciesData);
+    log.success(`Created ${policies.length} leave policies`);
     
-    // Save users and capture their ObjectIds
-    const savedUsers = [];
-    for (const user of users) {
-      const savedUser = await User.create(user);
-      savedUsers.push(savedUser);
-    }
+    // Display policies
+    policies.forEach(policy => {
+      log.data(`${policy.leaveType}: ${policy.totalDaysPerYear} days/year`);
+    });
+    console.log('');
     
-    // Update manager references with actual ObjectIds
-    for (let i = 0; i < savedUsers.length; i++) {
-      if (savedUsers[i].role === USER_ROLES.EMPLOYEE) {
-        const manager = savedUsers.find(u => u.role === USER_ROLES.MANAGER && u.department === savedUsers[i].department);
-        if (manager) {
-          savedUsers[i].managerId = manager._id;
-          await savedUsers[i].save();
-        }
-      }
-    }
+    // ==================== 3. Seed Holidays ====================
+    log.progress('Seeding holidays...');
+    const holidays = await Holiday.insertMany(holidaysData);
+    log.success(`Created ${holidays.length} holidays`);
     
-    console.log(`✅ Created ${savedUsers.length} users`);
-    console.log(`   - Admin: ${savedUsers.filter(u => u.role === USER_ROLES.ADMIN).length}`);
-    console.log(`   - Managers: ${savedUsers.filter(u => u.role === USER_ROLES.MANAGER).length}`);
-    console.log(`   - Employees: ${savedUsers.filter(u => u.role === USER_ROLES.EMPLOYEE).length}`);
-    console.log(`   - Gender Distribution:`);
-    console.log(`     • Male: ${savedUsers.filter(u => u.gender === USER_GENDER.MALE).length}`);
-    console.log(`     • Female: ${savedUsers.filter(u => u.gender === USER_GENDER.FEMALE).length}`);
-    console.log(`     • Other: ${savedUsers.filter(u => u.gender === USER_GENDER.OTHER).length}`);
+    // Display upcoming holidays
+    const today = new Date();
+    const upcomingHolidays = holidays
+      .filter(h => h.date >= today)
+      .sort((a, b) => a.date - b.date)
+      .slice(0, 5);
     
-    console.log('📅 Creating leaves...');
-    const leaves = generateLeaves(savedUsers);
-    const savedLeaves = await Leave.insertMany(leaves);
-    console.log(`✅ Created ${savedLeaves.length} leaves`);
-    
-    console.log('🎉 Creating holidays...');
-    const holidays = await Holiday.insertMany(generateHolidays());
-    console.log(`✅ Created ${holidays.length} holidays`);
-    
-    console.log('\n🎉 Database seeded successfully!');
-    console.log('\n📊 Summary:');
-    console.log(`   - Users: ${savedUsers.length}`);
-    console.log(`     • Admin: ${savedUsers.filter(u => u.role === USER_ROLES.ADMIN).length}`);
-    console.log(`     • Managers: ${savedUsers.filter(u => u.role === USER_ROLES.MANAGER).length}`);
-    console.log(`     • Employees: ${savedUsers.filter(u => u.role === USER_ROLES.EMPLOYEE).length}`);
-    console.log(`   - Leave Policies: ${policies.length}`);
-    console.log(`   - Leave Applications: ${savedLeaves.length}`);
-    console.log(`     • Pending: ${savedLeaves.filter(l => l.status === LEAVE_STATUS.PENDING).length}`);
-    console.log(`     • Approved: ${savedLeaves.filter(l => l.status === LEAVE_STATUS.APPROVED).length}`);
-    console.log(`     • Rejected: ${savedLeaves.filter(l => l.status === LEAVE_STATUS.REJECTED).length}`);
-    console.log(`     • Cancelled: ${savedLeaves.filter(l => l.status === LEAVE_STATUS.CANCELLED).length}`);
-    console.log(`   - Holidays: ${holidays.length}`);
-    
-    console.log('\n🔑 Test Credentials:');
-    console.log('   ┌─────────────────────────────────────────────────────────────┐');
-    console.log('   │ Admin:    admin@absentra.com            / Admin@123        │');
-    console.log('   │ Manager:  manager1@absentra.com         / Manager@123      │');
-    console.log('   │ Employee: employee1@absentra.com        / Employee@123     │');
-    console.log('   │ Female Employee: employee4@absentra.com / Employee@123     │');
-    console.log('   │ Male Employee: employee5@absentra.com   / Employee@123     │');
-    console.log('   │ (Employee 25 has low leave balance)                        │');
-    console.log('   └─────────────────────────────────────────────────────────────┘');
-    
-    console.log('\n📝 Edge Cases Included:');
-    console.log('   ✅ Gender-specific leaves: Maternity (female only), Paternity (male only)');
-    console.log('   ✅ Employee 25 - Insufficient leave balance (20 days requested, 2 available)');
-    console.log('   ✅ Employee 26 - Past leave date (2023)');
-    console.log('   ✅ Employee 10 - Overlapping leaves (Sep 10-15 and Sep 12-18)');
-    console.log('   ✅ Employee 15 - Half-day leave (July 15, first half)');
-    console.log('   ✅ Employee 20 - Leave with comments');
-    console.log('   ✅ Employee 28 - Inactive user');
-    console.log('   ✅ Female Employee - Maternity leave (180 days)');
-    console.log('   ✅ Male Employee - Paternity leave');
-    console.log('   ✅ Employee 6 - Bereavement leave');
-    console.log('   ✅ Employee 7 - Marriage leave');
-    console.log('   ✅ Employee 8 - Cancelled leave');
-    console.log('   ✅ Employee 9 - Rejected leave');
-    console.log('   ✅ All leave types covered');
-    console.log('   ✅ All statuses (Pending/Approved/Rejected/Cancelled)');
-    
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Error seeding database:', error);
-    if (error.errors) {
-      console.error('Validation Errors:');
-      Object.keys(error.errors).forEach(key => {
-        console.error(`   - ${key}: ${error.errors[key].message}`);
+    if (upcomingHolidays.length > 0) {
+      log.info('Upcoming holidays:');
+      upcomingHolidays.forEach(h => {
+        log.data(`${formatDate(h.date)} (${h.day}): ${h.name} (${h.type})`);
       });
     }
+    console.log('');
+    
+    // ==================== 4. Seed Users ====================
+    log.progress('Seeding users...');
+    
+    // Hash passwords before inserting
+    const usersWithHashedPasswords = await Promise.all(
+      usersData.map(async (userData) => {
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(userData.password, salt);
+        return { ...userData, password: hashedPassword };
+      })
+    );
+    
+    const users = await User.insertMany(usersWithHashedPasswords);
+    log.success(`Created ${users.length} users`);
+    
+    // Display user summary
+    const adminCount = users.filter(u => u.role === USER_ROLES.ADMIN).length;
+    const managerCount = users.filter(u => u.role === USER_ROLES.MANAGER).length;
+    const employeeCount = users.filter(u => u.role === USER_ROLES.EMPLOYEE).length;
+    const activeCount = users.filter(u => u.isActive).length;
+    
+    log.data(`Admins: ${adminCount} | Managers: ${managerCount} | Employees: ${employeeCount}`);
+    log.data(`Active users: ${activeCount} | Inactive users: ${users.length - activeCount}`);
+    
+    // Create a map for easy lookup by email (Postman uses emails)
+    const userByEmailMap = new Map();
+    users.forEach(user => {
+      userByEmailMap.set(user.email, user);
+    });
+    console.log('');
+    
+    // ==================== 5. Update Manager References ====================
+    log.progress('Updating manager references...');
+    
+    // Get manager and admin by email (matching Postman)
+    const admin = userByEmailMap.get('admin@absentra.com');
+    const manager = userByEmailMap.get('manager@absentra.com');
+    const employee = userByEmailMap.get('employee@absentra.com');
+    const employee2 = userByEmailMap.get('employee2@absentra.com');
+    
+    // Set manager references
+    if (employee && manager) {
+      await User.findByIdAndUpdate(employee._id, { managerId: manager._id });
+      log.data(`EMP001 (${employee.name}) -> reports to -> ${manager.name}`);
+    }
+    
+    if (employee2 && manager) {
+      await User.findByIdAndUpdate(employee2._id, { managerId: manager._id });
+      log.data(`EMP002 (${employee2.name}) -> reports to -> ${manager.name}`);
+    }
+    
+    if (manager && admin) {
+      await User.findByIdAndUpdate(manager._id, { managerId: admin._id });
+      log.data(`MGR001 (${manager.name}) -> reports to -> ${admin.name}`);
+    }
+    
+    log.success('Manager references updated');
+    console.log('');
+    
+    // ==================== 6. Seed Leave Applications ====================
+    log.progress('Seeding leave applications...');
+    
+    const managers = users.filter(u => u.role === USER_ROLES.MANAGER);
+    const employees = users.filter(u => u.role === USER_ROLES.EMPLOYEE && u.isActive);
+    
+    const leavesData = generateLeaveApplications(employees, managers);
+    if (leavesData.length > 0) {
+      const leaves = await Leave.insertMany(leavesData);
+      log.success(`Created ${leaves.length} leave applications`);
+      
+      // Display leave summary
+      const pendingLeaves = leaves.filter(l => l.status === LEAVE_STATUS.PENDING).length;
+      const approvedLeaves = leaves.filter(l => l.status === LEAVE_STATUS.APPROVED).length;
+      const rejectedLeaves = leaves.filter(l => l.status === LEAVE_STATUS.REJECTED).length;
+      const cancelledLeaves = leaves.filter(l => l.status === LEAVE_STATUS.CANCELLED).length;
+      
+      log.data(`Pending: ${pendingLeaves} | Approved: ${approvedLeaves} | Rejected: ${rejectedLeaves} | Cancelled: ${cancelledLeaves}`);
+      
+      // Store leave IDs for reference (matching Postman expectations)
+      if (leaves[0]) {
+        log.data(`Casual Leave ID (for approval): ${leaves[0]._id}`);
+      }
+      if (leaves[1]) {
+        log.data(`Sick Leave ID (for rejection): ${leaves[1]._id}`);
+      }
+      if (leaves[2]) {
+        log.data(`Earned Leave ID (for cancellation): ${leaves[2]._id}`);
+      }
+    } else {
+      log.warning('No leave applications created - check user references');
+    }
+    console.log('');
+    
+    // ==================== 7. Final Summary ====================
+    console.log('='.repeat(60));
+    log.success('DATABASE SEEDED SUCCESSFULLY!');
+    console.log('='.repeat(60));
+    
+    log.info('📊 Final Statistics:');
+    console.log('');
+    log.data(`🏢 Departments: Engineering, HR, Administration`);
+    log.data(`👥 Total Users: ${users.length}`);
+    log.data(`📋 Leave Policies: ${policies.length}`);
+    log.data(`🎉 Holidays: ${holidays.length}`);
+    log.data(`📝 Leave Applications: ${leavesData.length}`);
+    console.log('');
+    
+    log.info('🔐 Test Login Credentials (Matching Postman):');
+    console.log('');
+    log.data('Admin:    admin@absentra.com / Admin@123');
+    log.data('Manager:  manager@absentra.com / Manager@123');
+    log.data('Employee: employee@absentra.com / Employee@123');
+    log.data('Employee2: employee2@absentra.com / Employee@123');
+    log.data('Test:     test@absentra.com / Employee@123');
+    console.log('');
+    
+    log.info('📝 Postman Test Flow Compatibility:');
+    console.log('');
+    log.data('1. ✅ Register Admin - Will get "Email already exists" (seeded already)');
+    log.data('2. ✅ Login Admin - Token will be generated');
+    log.data('3. ✅ Register Manager - Will get "Email already exists" (seeded already)');
+    log.data('4. ✅ Login Manager - Token will be generated');
+    log.data('5. ✅ Register Employee - Will get "Email already exists" (seeded already)');
+    log.data('6. ✅ Login Employee - Token will be generated');
+    log.data('7. ✅ Apply for Leave - 3 pending leaves ready for testing');
+    log.data('8. ✅ Manager Approval/Rejection flows ready');
+    log.data('9. ✅ Reports and Admin endpoints ready');
+    console.log('');
+    
+    log.info('🎯 Ready for Postman API Testing!');
+    log.info('📌 Note: Some registration tests will show "duplicate email" because data is pre-seeded');
+    console.log('');
+    
+  } catch (error) {
+    log.error(`Seeding failed: ${error.message}`);
+    console.error(error);
     process.exit(1);
+  } finally {
+    await mongoose.connection.close();
+    log.info('Database connection closed');
   }
 };
 
-// Run seed
-seedDatabase();
+// Run seeder
+if (require.main === module) {
+  seedDatabase().then(() => {
+    process.exit(0);
+  }).catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+module.exports = seedDatabase;

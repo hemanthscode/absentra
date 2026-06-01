@@ -8,7 +8,7 @@ const { LEAVE_STATUS, HTTP_STATUS } = require('../config/constants');
 // @access  Private/Admin/Manager
 exports.getDepartmentReport = async (req, res, next) => {
   try {
-    const { department, startDate, endDate, format = 'json' } = req.query;
+    const { department, startDate, endDate, format = 'json', page = 1, limit = 50 } = req.query;
     
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -28,9 +28,14 @@ exports.getDepartmentReport = async (req, res, next) => {
     const userIds = users.map(u => u._id);
     query.employeeId = { $in: userIds };
     
+    // ADDED: Pagination for leaves
     const leaves = await Leave.find(query)
       .populate('employeeId', 'name email employeeId designation')
-      .sort({ startDate: 1 });
+      .sort({ startDate: 1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+    
+    const totalLeaves = await Leave.countDocuments(query);
     
     // Group by employee
     const reportData = users.map(user => {
@@ -62,9 +67,9 @@ exports.getDepartmentReport = async (req, res, next) => {
       department,
       period: { startDate, endDate },
       totalEmployees: users.length,
-      totalLeavesTaken: leaves.length,
+      totalLeavesTaken: totalLeaves,
       totalDaysTaken: leaves.reduce((sum, l) => sum + l.numberOfDays, 0),
-      averageDaysPerEmployee: leaves.reduce((sum, l) => sum + l.numberOfDays, 0) / users.length || 0
+      averageDaysPerEmployee: totalLeaves ? leaves.reduce((sum, l) => sum + l.numberOfDays, 0) / users.length : 0
     };
     
     res.status(HTTP_STATUS.OK).json({
@@ -72,6 +77,12 @@ exports.getDepartmentReport = async (req, res, next) => {
       data: {
         summary,
         details: reportData
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalLeaves,
+        pages: Math.ceil(totalLeaves / limit)
       }
     });
   } catch (error) {
@@ -85,7 +96,7 @@ exports.getDepartmentReport = async (req, res, next) => {
 exports.getEmployeeReport = async (req, res, next) => {
   try {
     const { employeeId } = req.params;
-    const { year = new Date().getFullYear() } = req.query;
+    const { year = new Date().getFullYear(), page = 1, limit = 50 } = req.query;
     
     const startDate = new Date(year, 0, 1);
     const endDate = new Date(year, 11, 31);
@@ -99,11 +110,21 @@ exports.getEmployeeReport = async (req, res, next) => {
       });
     }
     
+    // ADDED: Pagination for leaves
     const leaves = await Leave.find({
       employeeId,
       startDate: { $gte: startDate, $lte: endDate },
       status: LEAVE_STATUS.APPROVED
-    }).sort({ startDate: 1 });
+    })
+    .sort({ startDate: 1 })
+    .limit(limit * 1)
+    .skip((page - 1) * limit);
+    
+    const totalLeaves = await Leave.countDocuments({
+      employeeId,
+      startDate: { $gte: startDate, $lte: endDate },
+      status: LEAVE_STATUS.APPROVED
+    });
     
     // Calculate monthly breakdown
     const monthlyBreakdown = {};
@@ -136,7 +157,7 @@ exports.getEmployeeReport = async (req, res, next) => {
       },
       year,
       summary: {
-        totalLeavesTaken: leaves.length,
+        totalLeavesTaken: totalLeaves,
         totalDaysTaken: leaves.reduce((sum, l) => sum + l.numberOfDays, 0),
         averageDaysPerLeave: leaves.length ? leaves.reduce((sum, l) => sum + l.numberOfDays, 0) / leaves.length : 0
       },
@@ -147,7 +168,13 @@ exports.getEmployeeReport = async (req, res, next) => {
     
     res.status(HTTP_STATUS.OK).json({
       success: true,
-      data: reportData
+      data: reportData,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalLeaves,
+        pages: Math.ceil(totalLeaves / limit)
+      }
     });
   } catch (error) {
     next(error);
@@ -159,14 +186,19 @@ exports.getEmployeeReport = async (req, res, next) => {
 // @access  Private/Admin
 exports.getAttendanceSummary = async (req, res, next) => {
   try {
-    const { month, year = new Date().getFullYear() } = req.query;
+    const { month, year = new Date().getFullYear(), page = 1, limit = 50 } = req.query;
     const targetMonth = month ? parseInt(month) : new Date().getMonth() + 1;
     
     const startDate = new Date(year, targetMonth - 1, 1);
     const endDate = new Date(year, targetMonth, 0);
     
-    // Get all active employees
-    const employees = await User.find({ isActive: true }).select('_id name department designation');
+    // Get all active employees with pagination
+    const employees = await User.find({ isActive: true })
+      .select('_id name department designation')
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+    
+    const totalEmployees = await User.countDocuments({ isActive: true });
     
     // Get approved leaves for the month
     const leaves = await Leave.find({
@@ -183,10 +215,10 @@ exports.getAttendanceSummary = async (req, res, next) => {
     });
     
     // Calculate working days (excluding weekends and holidays)
-    const getWorkingDaysCount = (start, end, holidays) => {
+    const getWorkingDaysCount = (start, end, holidaysList) => {
       let count = 0;
       const current = new Date(start);
-      const holidayDates = holidays.map(h => h.date.toDateString());
+      const holidayDates = holidaysList.map(h => h.date.toDateString());
       
       while (current <= end) {
         const dayOfWeek = current.getDay();
@@ -256,6 +288,12 @@ exports.getAttendanceSummary = async (req, res, next) => {
         holidays: holidays.map(h => ({ name: h.name, date: h.date })),
         employeeSummary,
         departmentSummary
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalEmployees,
+        pages: Math.ceil(totalEmployees / limit)
       }
     });
   } catch (error) {
@@ -327,7 +365,8 @@ exports.exportReportCSV = async (req, res, next) => {
     
     for (const row of data) {
       const values = headers.map(header => {
-        const value = row[header.toLowerCase().replace(/ /g, '')] || row[header] || '';
+        const key = header.toLowerCase().replace(/ /g, '');
+        const value = row[key] || '';
         return `"${String(value).replace(/"/g, '""')}"`;
       });
       csvRows.push(values.join(','));

@@ -1,6 +1,6 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
-const { HTTP_STATUS, MESSAGES, USER_ROLES } = require('../config/constants');
+const { HTTP_STATUS, MESSAGES, USER_ROLES, USER_GENDER } = require('../config/constants');
 
 // Generate JWT Token
 const generateToken = (id, role) => {
@@ -285,12 +285,19 @@ exports.forgotPassword = async (req, res, next) => {
     user.resetPasswordExpire = Date.now() + 3600000; // 1 hour
     await user.save({ validateBeforeSave: false });
     
-    // In production, send email with reset link
-    // For now, return the token for testing
+    // FIXED: Do NOT return reset token in production
+    // Send email instead
+    try {
+      const { sendPasswordResetEmail } = require('../utils/emailService');
+      await sendPasswordResetEmail(user, resetToken);
+    } catch (emailError) {
+      console.error('Failed to send reset email:', emailError);
+      // Still return success to prevent email enumeration
+    }
+    
     res.status(HTTP_STATUS.OK).json({
       success: true,
-      message: 'Password reset token sent',
-      resetToken // Remove in production
+      message: 'Password reset email sent. Please check your inbox.'
     });
   } catch (error) {
     next(error);

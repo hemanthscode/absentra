@@ -4,8 +4,7 @@ const holidaySchema = new mongoose.Schema({
   name: {
     type: String,
     required: [true, 'Holiday name is required'],
-    trim: true,
-    unique: true
+    trim: true
   },
   date: {
     type: Date,
@@ -15,7 +14,7 @@ const holidaySchema = new mongoose.Schema({
   day: {
     type: String,
     enum: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
-    required: true
+    required: false  // Changed to false - will be auto-set
   },
   type: {
     type: String,
@@ -41,7 +40,7 @@ const holidaySchema = new mongoose.Schema({
   }],
   year: {
     type: Number,
-    required: true
+    required: false  // Changed to false - will be auto-set
   },
   isActive: {
     type: Boolean,
@@ -64,6 +63,16 @@ holidaySchema.pre('save', function(next) {
   // Set year
   this.year = this.date.getFullYear();
   
+  next();
+});
+
+// Pre-validate middleware to ensure year and day are set before validation
+holidaySchema.pre('validate', function(next) {
+  if (this.date) {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    this.day = days[this.date.getDay()];
+    this.year = this.date.getFullYear();
+  }
   next();
 });
 

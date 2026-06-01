@@ -1,29 +1,36 @@
 const Holiday = require('../models/Holiday');
 
+// Helper to normalize date to start of day in UTC
+const normalizeDate = (date) => {
+  const d = new Date(date);
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0));
+};
+
 // Calculate working days between two dates (excluding weekends and holidays)
 exports.calculateWorkingDays = async (startDate, endDate, isHalfDay = false, department = null, location = null) => {
   let workingDays = 0;
-  const currentDate = new Date(startDate);
-  const end = new Date(endDate);
+  const currentDate = normalizeDate(startDate);
+  const end = normalizeDate(endDate);
   
   // Get holidays between dates
   const holidays = await Holiday.find({
-    date: { $gte: startDate, $lte: endDate },
+    date: { $gte: currentDate, $lte: end },
     isActive: true
   });
   
-  const holidayDates = holidays.map(h => h.date.toDateString());
+  const holidayDates = holidays.map(h => h.date.toISOString().split('T')[0]);
   
   while (currentDate <= end) {
-    const dayOfWeek = currentDate.getDay();
+    const dayOfWeek = currentDate.getUTCDay();
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    const isHoliday = holidayDates.includes(currentDate.toDateString());
+    const dateStr = currentDate.toISOString().split('T')[0];
+    const isHoliday = holidayDates.includes(dateStr);
     
     if (!isWeekend && !isHoliday) {
       workingDays++;
     }
     
-    currentDate.setDate(currentDate.getDate() + 1);
+    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
   }
   
   // Adjust for half day
@@ -37,20 +44,21 @@ exports.calculateWorkingDays = async (startDate, endDate, isHalfDay = false, dep
 // Calculate working days synchronously (without DB call)
 exports.calculateWorkingDaysSync = (startDate, endDate, holidays = [], isHalfDay = false) => {
   let workingDays = 0;
-  const currentDate = new Date(startDate);
-  const end = new Date(endDate);
-  const holidayDates = holidays.map(h => new Date(h).toDateString());
+  const currentDate = normalizeDate(startDate);
+  const end = normalizeDate(endDate);
+  const holidayDates = holidays.map(h => normalizeDate(h).toISOString().split('T')[0]);
   
   while (currentDate <= end) {
-    const dayOfWeek = currentDate.getDay();
+    const dayOfWeek = currentDate.getUTCDay();
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    const isHoliday = holidayDates.includes(currentDate.toDateString());
+    const dateStr = currentDate.toISOString().split('T')[0];
+    const isHoliday = holidayDates.includes(dateStr);
     
     if (!isWeekend && !isHoliday) {
       workingDays++;
     }
     
-    currentDate.setDate(currentDate.getDate() + 1);
+    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
   }
   
   if (isHalfDay) {
@@ -60,40 +68,37 @@ exports.calculateWorkingDaysSync = (startDate, endDate, holidays = [], isHalfDay
   return Math.max(0, workingDays);
 };
 
-// Validate leave dates - FIXED VERSION
+// Validate leave dates - FIXED with proper UTC handling
 exports.validateLeaveDates = (startDate, endDate, minDaysBeforeApply = 1) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Get current date in UTC (start of day)
+  const now = new Date();
+  const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
   
-  // Set start date to beginning of day for accurate comparison
-  const start = new Date(startDate);
-  start.setHours(0, 0, 0, 0);
-  
-  const end = new Date(endDate);
-  end.setHours(0, 0, 0, 0);
+  // Normalize input dates to UTC start of day
+  const startUTC = normalizeDate(startDate);
+  const endUTC = normalizeDate(endDate);
   
   // Check if dates are valid
-  if (start > end) {
+  if (startUTC > endUTC) {
     return {
       isValid: false,
       message: 'End date must be after start date'
     };
   }
   
-  // Check if start date is in the past
-  if (start < today) {
+  // Check if start date is in the past (compare as UTC dates)
+  if (startUTC < todayUTC) {
     return {
       isValid: false,
       message: 'Start date cannot be in the past'
     };
   }
   
-  // Calculate days difference between today and start date
-  const timeDiff = start.getTime() - today.getTime();
+  // Calculate days difference
+  const timeDiff = startUTC.getTime() - todayUTC.getTime();
   const daysDiff = Math.ceil(timeDiff / (1000 * 3600 * 24));
   
   // Check minimum days before apply
-  // For minDaysBeforeApply = 1, tomorrow (daysDiff = 1) should be valid
   if (minDaysBeforeApply > 0 && daysDiff < minDaysBeforeApply) {
     return {
       isValid: false,
@@ -109,8 +114,8 @@ exports.validateLeaveDates = (startDate, endDate, minDaysBeforeApply = 1) => {
 
 // Get number of days between dates
 exports.getDaysDifference = (startDate, endDate) => {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
+  const start = normalizeDate(startDate);
+  const end = normalizeDate(endDate);
   const diffTime = Math.abs(end - start);
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   return diffDays + 1; // Inclusive of both dates
@@ -138,21 +143,22 @@ exports.getMonthName = (monthNumber) => {
 exports.getYearMonth = (date) => {
   const d = new Date(date);
   return {
-    year: d.getFullYear(),
-    month: d.getMonth() + 1
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1
   };
 };
 
 // Check if a date is weekend
 exports.isWeekend = (date) => {
-  const dayOfWeek = new Date(date).getDay();
+  const dayOfWeek = new Date(date).getUTCDay();
   return dayOfWeek === 0 || dayOfWeek === 6;
 };
 
 // Check if a date is holiday (async)
 exports.isHoliday = async (date, department = null, location = null) => {
+  const normalizedDate = normalizeDate(date);
   const holiday = await Holiday.findOne({
-    date: new Date(date),
+    date: { $gte: normalizedDate, $lt: new Date(normalizedDate.getTime() + 86400000) },
     isActive: true
   });
   
@@ -172,8 +178,8 @@ exports.isHoliday = async (date, department = null, location = null) => {
 
 // Get working days in a month
 exports.getWorkingDaysInMonth = async (year, month, department = null, location = null) => {
-  const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0);
+  const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+  const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59));
   
   let workingDays = 0;
   const currentDate = new Date(startDate);
@@ -183,18 +189,19 @@ exports.getWorkingDaysInMonth = async (year, month, department = null, location 
     isActive: true
   });
   
-  const holidayDates = holidays.map(h => h.date.toDateString());
+  const holidayDates = holidays.map(h => h.date.toISOString().split('T')[0]);
   
   while (currentDate <= endDate) {
-    const dayOfWeek = currentDate.getDay();
+    const dayOfWeek = currentDate.getUTCDay();
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-    const isHoliday = holidayDates.includes(currentDate.toDateString());
+    const dateStr = currentDate.toISOString().split('T')[0];
+    const isHoliday = holidayDates.includes(dateStr);
     
     if (!isWeekend && !isHoliday) {
       workingDays++;
     }
     
-    currentDate.setDate(currentDate.getDate() + 1);
+    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
   }
   
   return workingDays;

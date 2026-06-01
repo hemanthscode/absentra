@@ -5,6 +5,13 @@ const LeavePolicy = require('../models/LeavePolicy');
 const { LEAVE_STATUS, LEAVE_TYPES, HTTP_STATUS, MESSAGES } = require('../config/constants');
 const { calculateWorkingDays, validateLeaveDates } = require('../utils/dateUtils');
 const { checkLeaveBalance, updateLeaveBalance } = require('../utils/leaveValidation');
+const { sendLeaveApplicationEmail, sendLeaveApprovalEmail, sendLeaveRejectionEmail, sendPendingLeaveNotification } = require('../utils/emailService');
+
+// Helper function to normalize date to UTC start of day
+const normalizeToUTCStart = (dateString) => {
+  const date = new Date(dateString);
+  return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0));
+};
 
 // @desc    Apply for leave
 // @route   POST /api/leaves/apply
@@ -44,17 +51,15 @@ exports.applyLeave = async (req, res, next) => {
       });
     }
     
-    // Validate dates
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    
-    // Set hours to 0 for accurate date comparison
-    start.setHours(0, 0, 0, 0);
-    end.setHours(0, 0, 0, 0);
+    // FIXED: Use UTC normalized dates
+    const start = normalizeToUTCStart(startDate);
+    const end = normalizeToUTCStart(endDate);
     
     console.log('Date Validation Debug:', {
-      startDate: start,
-      endDate: end,
+      originalStart: startDate,
+      originalEnd: endDate,
+      startUTC: start,
+      endUTC: end,
       today: new Date(),
       minDaysBeforeApply: policy.minDaysBeforeApply
     });
@@ -111,8 +116,20 @@ exports.applyLeave = async (req, res, next) => {
       appliedDate: new Date()
     });
     
-    // Populate employee details for response
+    // Populate both employeeId AND managerId
     await leave.populate('employeeId', 'name email employeeId designation gender');
+    await leave.populate('managerId', 'name email employeeId designation');
+    
+    // Send email confirmation to employee
+    await sendLeaveApplicationEmail(employee, leave);
+    
+    // Send notification to manager
+    if (employee.managerId) {
+      const manager = await User.findById(employee.managerId);
+      if (manager) {
+        await sendPendingLeaveNotification(manager, employee, leave);
+      }
+    }
     
     res.status(HTTP_STATUS.CREATED).json({
       success: true,
@@ -136,8 +153,8 @@ exports.getMyLeaves = async (req, res, next) => {
     
     if (status) query.status = status;
     if (startDate && endDate) {
-      query.startDate = { $gte: new Date(startDate) };
-      query.endDate = { $lte: new Date(endDate) };
+      query.startDate = { $gte: normalizeToUTCStart(startDate) };
+      query.endDate = { $lte: normalizeToUTCStart(endDate) };
     }
     
     const leaves = await Leave.find(query)
@@ -231,15 +248,15 @@ exports.updateLeave = async (req, res, next) => {
     
     const { startDate, endDate, reason, contactDuringLeave, emergencyContact } = req.body;
     
-    if (startDate) leave.startDate = new Date(startDate);
-    if (endDate) leave.endDate = new Date(endDate);
+    if (startDate) leave.startDate = normalizeToUTCStart(startDate);
+    if (endDate) leave.endDate = normalizeToUTCStart(endDate);
     if (reason) leave.reason = reason;
     if (contactDuringLeave) leave.contactDuringLeave = contactDuringLeave;
     if (emergencyContact) leave.emergencyContact = emergencyContact;
     
     // Recalculate days if dates changed
     if (startDate || endDate) {
-      const numberOfDays = calculateWorkingDays(leave.startDate, leave.endDate, leave.isHalfDay);
+      const numberOfDays = await calculateWorkingDays(leave.startDate, leave.endDate, leave.isHalfDay);
       leave.numberOfDays = numberOfDays;
     }
     
@@ -389,6 +406,9 @@ exports.approveLeave = async (req, res, next) => {
     
     await leave.save();
     
+    // Send email notification to employee
+    await sendLeaveApprovalEmail(leave.employeeId, leave, req.user);
+    
     res.status(HTTP_STATUS.OK).json({
       success: true,
       message: MESSAGES.LEAVE_APPROVED,
@@ -405,7 +425,8 @@ exports.approveLeave = async (req, res, next) => {
 exports.rejectLeave = async (req, res, next) => {
   try {
     const { comments } = req.body;
-    const leave = await Leave.findById(req.params.id);
+    const leave = await Leave.findById(req.params.id)
+      .populate('employeeId', 'name email');
     
     if (!leave) {
       return res.status(HTTP_STATUS.NOT_FOUND).json({
@@ -437,6 +458,9 @@ exports.rejectLeave = async (req, res, next) => {
     if (comments) leave.comments = comments;
     
     await leave.save();
+    
+    // Send email notification to employee
+    await sendLeaveRejectionEmail(leave.employeeId, leave, req.user);
     
     res.status(HTTP_STATUS.OK).json({
       success: true,
@@ -491,14 +515,14 @@ exports.getTeamLeaveSummary = async (req, res, next) => {
     // Build date filter
     let dateFilter = {};
     if (month) {
-      const startDate = new Date(year, month - 1, 1);
-      const endDate = new Date(year, month, 0);
+      const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+      const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59));
       dateFilter = {
         startDate: { $gte: startDate, $lte: endDate }
       };
     } else {
-      const startDate = new Date(year, 0, 1);
-      const endDate = new Date(year, 11, 31);
+      const startDate = new Date(Date.UTC(year, 0, 1, 0, 0, 0));
+      const endDate = new Date(Date.UTC(year, 11, 31, 23, 59, 59));
       dateFilter = {
         startDate: { $gte: startDate, $lte: endDate }
       };
