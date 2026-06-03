@@ -39,17 +39,23 @@ const getLeavesValidation = [
   query('endDate').optional().isISO8601()
 ];
 
-// Employee routes
-router.post('/apply', protect, applyLeaveValidation, leaveController.applyLeave);
-router.get('/my-leaves', protect, getLeavesValidation, leaveController.getMyLeaves);
+// ============ IMPORTANT: SPECIFIC ROUTES FIRST ============
+// These must come BEFORE the /:id route
+
+// Manager routes (specific paths first)
+router.get('/pending/team', protect, isAdminOrManager, leaveController.getTeamPendingLeaves);
+router.get('/team-summary', protect, isAdminOrManager, leaveController.getTeamLeaveSummary);
 router.get('/balance', protect, leaveController.getLeaveBalance);
+router.get('/my-leaves', protect, getLeavesValidation, leaveController.getMyLeaves);
+
+// Employee routes with specific paths
+router.post('/apply', protect, applyLeaveValidation, leaveController.applyLeave);
+
+// ============ PARAMETER ROUTES LAST ============
+// These have :id parameter - must come AFTER specific routes
 router.get('/:id', protect, param('id').isMongoId(), leaveController.getLeaveById);
 router.put('/:id', protect, param('id').isMongoId(), updateLeaveValidation, leaveController.updateLeave);
 router.delete('/:id/cancel', protect, param('id').isMongoId(), leaveController.cancelLeave);
-
-// Manager routes
-router.get('/pending/team', protect, isAdminOrManager, leaveController.getTeamPendingLeaves);
-router.get('/team-summary', protect, isAdminOrManager, leaveController.getTeamLeaveSummary);
 router.put('/:id/approve', protect, canManageLeave, reviewLeaveValidation, leaveController.approveLeave);
 router.put('/:id/reject', protect, canManageLeave, reviewLeaveValidation, leaveController.rejectLeave);
 
